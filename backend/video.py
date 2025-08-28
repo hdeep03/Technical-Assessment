@@ -1,5 +1,5 @@
 import cv2
-from helpers import get_temp_mp4_path, face_cascade
+from helpers import get_temp_mp4_path, face_cascade, profile_face_cascade
 import os
 import ffmpeg
 import numpy as np
@@ -100,6 +100,11 @@ def extract_fg(frame):
         gray, scaleFactor=1.1, minNeighbors=3, minSize=(8, 8),
         flags=cv2.CASCADE_SCALE_IMAGE
     )
+    if len(faces) == 0:
+        faces = profile_face_cascade.detectMultiScale(
+            gray, scaleFactor=1.1, minNeighbors=3, minSize=(8, 8),
+            flags=cv2.CASCADE_SCALE_IMAGE
+        )
 
     if len(faces) == 0:
         return np.zeros((H, W), dtype=np.uint8)

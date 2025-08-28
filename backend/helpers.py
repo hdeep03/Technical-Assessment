@@ -6,6 +6,7 @@ import cv2
 
 # A lightweight face detection model
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+profile_face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_profileface.xml')
         
 # Configure logging
 logging.basicConfig(level=logging.INFO)

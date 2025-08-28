@@ -33,6 +33,23 @@ const App: React.FC = () => {
   const [stage, setStage] = useState<Stage>('idle');
   const [processedUrl, setProcessedUrl] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
+  const handleDownload = async () => {
+    try {
+      const res = await fetch(processedUrl);
+      if (!res.ok) throw new Error('Failed to fetch video');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'processed-video.mp4'; // force download
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download failed:', err);
+    }
+  };
 
   const handleProcess = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -73,10 +90,10 @@ const App: React.FC = () => {
       <div style={{ textAlign: 'center', paddingTop: 24 }}>
         {/* Stage: idle -> show form */}
         {stage === 'idle' && (
-          <form onSubmit={handleProcess} style={{ textAlign: 'left' }}>
-            <h3 style={{ marginBottom: 16 }}>Process a Video</h3>
+          <form onSubmit={handleProcess} className="form-container">
+            <h3>Process a Video</h3>
 
-            <div className="mb-3">
+            <div>
               <label htmlFor="videoUrl" className="form-label">Video URL</label>
               <input
                 id="videoUrl"
@@ -89,7 +106,7 @@ const App: React.FC = () => {
               />
             </div>
 
-            <div className="mb-3">
+            <div>
               <label htmlFor="filter" className="form-label">Filter</label>
               <select
                 id="filter"
@@ -103,7 +120,7 @@ const App: React.FC = () => {
               </select>
             </div>
 
-            <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
               <button type="submit" className="btn btn-primary">Process</button>
               {errorMsg && <div className="text-danger" style={{ alignSelf: 'center' }}>{errorMsg}</div>}
             </div>
@@ -130,9 +147,9 @@ const App: React.FC = () => {
             </div>
 
             <div style={{ marginTop: 16 }}>
-              <a href={processedUrl} target="_blank" rel="noreferrer" className="btn btn-outline-secondary">
-                Open Processed URL
-              </a>
+              <button onClick={handleDownload} className="btn btn-outline-secondary">
+                Download Video
+              </button>
               <button onClick={reset} className="btn btn-link" style={{ marginLeft: 8 }}>
                 Process another video
               </button>
