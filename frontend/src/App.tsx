@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import VideoPlayer from './components/VideoPlayer';
 import { videoUrl, backendUrl } from './consts';
 
@@ -22,6 +22,13 @@ const FILTERS: { key: FilterKey; label: string }[] = [
 
 type Stage = 'idle' | 'processing' | 'done';
 
+type StatusResponse = {
+  status?: 'processing' | 'completed' | string;
+  progress?: number;
+  total_frames?: number;
+  error?: string;
+};
+
 const App: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -33,6 +40,16 @@ const App: React.FC = () => {
   const [stage, setStage] = useState<Stage>('idle');
   const [processedUrl, setProcessedUrl] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
+
+  // processing state
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [framesDone, setFramesDone] = useState<number>(0);
+  const [totalFrames, setTotalFrames] = useState<number>(0);
+
+  // thumbnail (blob URL so we bypass cache without query params)
+  const [thumbUrlObject, setThumbUrlObject] = useState<string | null>(null);
+  const [thumbTried, setThumbTried] = useState<boolean>(false); // have we attempted at least once?
+
   const handleDownload = async () => {
     try {
       const res = await fetch(processedUrl);
@@ -41,7 +58,7 @@ const App: React.FC = () => {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'processed-video.mp4'; // force download
+      a.download = 'processed-video.mp4';
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -55,6 +72,17 @@ const App: React.FC = () => {
     e.preventDefault();
     setErrorMsg('');
     setStage('processing');
+    setFramesDone(0);
+    setTotalFrames(0);
+    setProcessedUrl('');
+    setJobId(null);
+
+    // reset thumbnail state
+    if (thumbUrlObject) {
+      URL.revokeObjectURL(thumbUrlObject);
+    }
+    setThumbUrlObject(null);
+    setThumbTried(false);
 
     try {
       const res = await fetch(`${backendUrl}/process`, {
@@ -68,22 +96,114 @@ const App: React.FC = () => {
         throw new Error(text || `Request failed with status ${res.status}`);
       }
 
-      // Expecting: { processedUrl: string }
-      const data: { path?: string } = await res.json();
-      if (!data.path) throw new Error('Malformed response: missing path');
-      setProcessedUrl(`${backendUrl}/${data.path}`);
-      setStage('done');
+      const data: { job_id?: string; error?: string } = await res.json();
+      if (!data.job_id) throw new Error(data.error || 'Malformed response: missing job_id');
+
+      setJobId(data.job_id);
+      // processed file will be served at /videos/<job_id> when completed
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Failed to process video');
+      setErrorMsg(err?.message || 'Failed to start processing');
       setStage('idle');
     }
   };
+
+  // Helper to make backend thumbnail path from jobId
+  const getThumbPath = (id: string) => {
+    const base = id.endsWith('.mp4') ? id.slice(0, -4) : id;
+    return `${backendUrl}/thumb/${base}.jpg`;
+  };
+
+  // Try to fetch thumbnail (no cache-busting params; use fetch no-store, then blob URL)
+  const tryFetchThumbnail = async (id: string) => {
+    try {
+      const res = await fetch(getThumbPath(id), { cache: 'no-store' });
+      if (!res.ok) {
+        setThumbTried(true);
+        return false;
+      }
+      const blob = await res.blob();
+      if (thumbUrlObject) URL.revokeObjectURL(thumbUrlObject);
+      const objUrl = URL.createObjectURL(blob);
+      setThumbUrlObject(objUrl);
+      setThumbTried(true);
+      return true;
+    } catch {
+      setThumbTried(true);
+      return false;
+    }
+  };
+
+  // Poll job status while processing; also attempt thumbnail fetch until it succeeds once
+  useEffect(() => {
+    if (stage !== 'processing' || !jobId) return;
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`${backendUrl}/status/${jobId}`);
+        const s: StatusResponse = await res.json();
+
+        if (!res.ok || s.error) {
+          if (!cancelled) {
+            setErrorMsg(s.error || 'Processing failed');
+            setStage('idle');
+          }
+          return;
+        }
+
+        if (!cancelled) {
+          const done = s.progress ?? 0;
+          const total = s.total_frames ?? 0;
+          setFramesDone(done);
+          setTotalFrames(total);
+
+          // Try to fetch thumbnail if we don't have it yet
+          if (!thumbUrlObject) {
+            await tryFetchThumbnail(jobId);
+          }
+
+          if (s.status === 'completed') {
+            setProcessedUrl(`${backendUrl}/videos/${jobId}`);
+            setStage('done');
+            return;
+          }
+        }
+
+        if (!cancelled) {
+          setTimeout(poll, 700); // ~0.7s cadence
+        }
+      } catch {
+        if (!cancelled) {
+          setTimeout(poll, 1200); // backoff on transient errors
+        }
+      }
+    };
+
+    poll();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, jobId]);
 
   const reset = () => {
     setStage('idle');
     setProcessedUrl('');
     setErrorMsg('');
+    setJobId(null);
+    setFramesDone(0);
+    setTotalFrames(0);
+
+    if (thumbUrlObject) {
+      URL.revokeObjectURL(thumbUrlObject);
+      setThumbUrlObject(null);
+    }
+    setThumbTried(false);
   };
+
+  const pct =
+    totalFrames > 0 ? Math.min(100, Math.max(0, Math.round((framesDone / totalFrames) * 100))) : 0;
 
   return (
     <div className="container" style={{ maxWidth: 960, margin: '0 auto' }}>
@@ -127,11 +247,40 @@ const App: React.FC = () => {
           </form>
         )}
 
-        {/* Stage: processing -> show spinner */}
+        {/* Stage: processing -> show progress + thumbnail */}
         {stage === 'processing' && (
-          <div style={{ padding: 40 }}>
-            <div className="spinner-border" role="status" aria-label="Processing" />
-            <div style={{ marginTop: 12 }}>Processing your video…</div>
+          <div className="form-container" style={{ textAlign: 'left' }}>
+            <h3>Processing your video…</h3>
+
+            {/* Thumbnail preview (blob URL) */}
+            {jobId && (
+              <div className="thumb-wrap">
+                {thumbUrlObject ? (
+                  <img className="thumb" src={thumbUrlObject} alt="thumbnail" />
+                ) : (
+                  <div className="thumb-fallback">
+                    <div className="spinner-border" role="status" aria-label="Loading thumbnail" />
+                    <span>{thumbTried ? 'Waiting for thumbnail…' : 'Preparing preview…'}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Progress bar */}
+            <div style={{ background: '#eee', borderRadius: 8, overflow: 'hidden', height: 12, margin: '12px 0' }}>
+              <div style={{ width: `${pct}%`, height: '100%', background: '#007bff', transition: 'width .3s' }} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#555' }}>
+              <span>{pct}%</span>
+              <span>{framesDone} / {totalFrames} frames</span>
+            </div>
+
+            <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div className="spinner-border" role="status" aria-label="Processing" />
+              <span style={{ color: '#666' }}>Applying filters…</span>
+            </div>
+
+            {errorMsg && <div className="text-danger" style={{ marginTop: 12 }}>{errorMsg}</div>}
           </div>
         )}
 
@@ -150,7 +299,7 @@ const App: React.FC = () => {
               <button onClick={handleDownload} className="btn btn-outline-secondary">
                 Download Video
               </button>
-              <button onClick={reset} className="btn btn-link" style={{ marginLeft: 8 }}>
+              <button onClick={reset} className="btn btn-primary" style={{ marginLeft: 8 }}>
                 Process another video
               </button>
             </div>

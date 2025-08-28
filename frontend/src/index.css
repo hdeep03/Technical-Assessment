@@ -184,3 +184,57 @@ form h3 {
   margin-bottom: 20px;
   text-align: center;
 }
+/* Outline button (used for Download) */
+.btn-outline-secondary {
+  background-color: transparent;
+  border: 1px solid #6c757d;
+  color: #6c757d;
+}
+.btn-outline-secondary:hover {
+  background-color: #6c757d;
+  color: white;
+}
+
+/* Link button (used for "Process another video") */
+.btn-link {
+  background: none;
+  border: none;
+  color: #007bff;
+  padding: 0;
+  font-size: 14px;
+  text-decoration: underline;
+}
+.btn-link:hover {
+  color: #0056b3;
+  text-decoration: none;
+}
+
+.thumb-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 400px;   /* limit max width */
+  aspect-ratio: 16/9; /* keep nice proportions */
+  margin: 12px auto;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f0f2f5;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+
+.thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover; /* crop nicely instead of stretching */
+  display: block;
+}
+
+.thumb-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  font-size: 14px;
+}

@@ -18,10 +18,11 @@ def sepia_filter(frame):
                       [0.393, 0.769, 0.189]])
     return cv2.transform(frame, sepia)
 
-def apply_filter(video_path, filter_func):
+def apply_filter(video_path, filter_func, jobs, job_id):
+    jobs[job_id] = {"status": "processing", "progress": None, "total_frames": None}
+    thumbnail_path = video_path.replace('.mp4', '.jpg')
     transform_video_only_out = get_temp_mp4_path() 
     tmp_out = get_temp_mp4_path()
-
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -29,19 +30,25 @@ def apply_filter(video_path, filter_func):
     fps = cap.get(cv2.CAP_PROP_FPS)
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(transform_video_only_out, fourcc, fps, (frame_width, frame_height))
+
+    n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    jobs[job_id] = {"status": "processing", "progress": 0, "total_frames": n_frames}
     fg_mask = None
     i = 0
     f = 2
     while True:
-        print(i)
         ok, frame = cap.read()
         if not ok:
             break
-        if fg_mask is None or i % (fps // f) == 0:
+        is_keyframe = fg_mask is None or i % (fps // f) == 0
+        if is_keyframe:
             fg_mask = extract_fg(frame)
+        jobs[job_id]["progress"] = i
         transformed_bgd = filter_func(frame)
         result = np.where(fg_mask[..., None] >= 128, frame, transformed_bgd)
         out.write(result)
+        if is_keyframe:
+            cv2.imwrite(thumbnail_path, result)
         i += 1
     cap.release()
     out.release()
@@ -66,6 +73,7 @@ def apply_filter(video_path, filter_func):
         .run(quiet=True)
     )
     os.replace(tmp_out, video_path)
+    jobs[job_id]["status"] = "completed"
 
 def postprocess_mask(mask):
     """
@@ -90,7 +98,7 @@ def extract_fg(frame):
 
     mask = np.full((h, w), cv2.GC_PR_BGD, dtype=np.uint8)
 
-    border = max(2, min(h, w) // 100)
+    border = max(0, min(h, w) // 100)
     mask[:border, :] = cv2.GC_BGD
     mask[-border:, :] = cv2.GC_BGD
     mask[:, :border] = cv2.GC_BGD
@@ -113,7 +121,7 @@ def extract_fg(frame):
 
     mask[y:y+fh, x:x+fw] = cv2.GC_PR_FGD
 
-    side_mult = 1.2
+    side_mult = 1.0
     down_mult = 2.0
 
     cx = x + fw / 2.0

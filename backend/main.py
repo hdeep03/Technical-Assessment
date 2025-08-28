@@ -2,6 +2,7 @@ import os
 import cv2
 import ffmpeg
 from flask import Flask, request, jsonify, send_from_directory
+from threading import Thread
 from flask_cors import CORS
 from dotenv import load_dotenv
 import logging
@@ -11,6 +12,8 @@ from video import apply_filter, grayscale_filter, sepia_filter, nop_filter
 
 app = Flask(__name__)
 cors = CORS(app)
+
+JOBS = {}
 
 load_dotenv()
 
@@ -38,16 +41,28 @@ def process():
         if not video_url:
             return jsonify({"error": "video_url is required"}), 400
         out_path = get_temp_mp4_path()
+        job_id = os.path.basename(out_path)
         download_video(video_url, out_path)
-        apply_filter(out_path, filters[filter_type])
-        return jsonify({"path": f"/videos/{os.path.basename(out_path)}"}), 200
+        t = Thread(target=apply_filter, args=(out_path, filters[filter_type], JOBS, job_id))
+        t.start()
+        return jsonify({"job_id": job_id}), 200
     except Exception as e:
         logger.error(f"Error: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route("/status/<job_id>", methods=["GET"])
+def get_status(job_id):
+    if job_id in JOBS:
+        return jsonify(JOBS[job_id]), 200
+    return jsonify({"error": "Job not found"}), 404
+
 @app.route("/videos/<path:filename>", methods=["GET"])
 def get_video(filename):
-    return send_from_directory(VIDEO_DIR, filename)
+    return send_from_directory(TMP_DIR, filename)
+
+@app.route("/thumb/<path:filename>", methods=["GET"])
+def get_thumbnail(filename):
+    return send_from_directory(TMP_DIR, filename)
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=8080, debug=True, use_reloader=False)
